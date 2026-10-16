@@ -1,0 +1,9 @@
+Analysis: <input>
+Recommended modifications: 41
+Global code size: 64 bytes
+Global data size: 28 bytes
+
+Warnings:
+- Line 36: Call to unknown timing subroutine 'mystery'
+- Line 37: Unknown operator or macro 'unknown_op'
+

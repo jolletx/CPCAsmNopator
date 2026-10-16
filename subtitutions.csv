@@ -1,0 +1,10 @@
+input;linked;type
+k;a,b,c,d,e,h,l;8bit register
+s;ixh,ixl,iyh,iyl;8bit register extended
+pp;bc,de,hl,af;16bit register
+qq;ix,iy;16bit register extended
+of;of;8bit signed val
+n;n;8bit val
+nn;nn;16bit val
+bt;bt;8bit7
+cc;z,nz,c,nc,po,pe,m;possible conditions

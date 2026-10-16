@@ -1,0 +1,36 @@
+Goal: create a python script to update Z80 assembly code with operation timings and size.
+
+Input of script:
+- Input 1 mandatory: a file to analyze and modify if requested
+- Input 2 optional: a flag to update existing values if they are wrong [Default off]
+- Input 3 optional: a flag to provide verbose output [Default off]
+- input 4 optional: a flag to modify input or not [Default no modification]
+Output of script: 
+- console output of total number of recommended modifications and global outputs of Size
+- If verbose is set, each input line is displayed with a summary of findings: size / timings of the line, planned modifications
+- Compact console output of line before modification / line after (if verbose is not set and no modification of input)
+- console output of all issues that have been faced (missing operator definition or macro, call to unknown timing subroutine, etc... )
+
+Required behavior:
+- Timing of each operation need to be printed at the begining of a comment on each operation line
+- Use [2] as a template for a 2 NOP operation, [3/4] for an operation that have 2 different timings based on condition success or not
+- Try to preserve comments spacing that is used inside the input file (comments often start at the same column on an instruction line), so use this as a base if a comment need to be added
+- Assembly macro, labels, preprocessor instructions should not raise an issue
+- Issues are logged but do not stop process (treated as warning)
+- Compute global size of code and global size of data separately, data and code are often inside specific .area with leading underscores
+- Data repeat should output correct size
+
+References: 
+- Assembler used is sdas in sdcc for z80 that can be found in the cpctelera/tools/sdcc* directory of the project, use reference manual in cpctelera/tools/z80-timings/references/sdas.txt to get preprocessor instructions and behavior
+- A template of z80 instructions with needed timings for Amstrad CPC (measured as a integer multiple of NOP operation) in cpctelera/tools/z80-timings/instruction.csv
+- A substitution file explaining subparts of template in cpctelera/tools/z80-timings/substitutions.csv
+- A sample of output in cpctelera/tools/z80-timings/reference/cpct_drawLineM1_f.asm , but it can contains issues
+
+Other:
+- Review existing implementation and tests with requirements before continuing
+- Tests: Creating a sample based on requirements and a sample source code in cpctelera/src/geometry/M1/cpct_clampLineM1.s 
+and a projected reference output, and test by launching script on the sample and compare it to the output inside a bash shell
+- Output script directory and name: cpctelera/tools/z80-timings/z80-timings.py
+- Output directory for test sample and reference: cpctelera/tools/z80-timings/test
+- Put files for your tests and computation inside a temporary directory : cpctelera/tools/z80-timings/temp
+- Local python can be launched inside a cygwin terminal which is located in /usr/bin/python
