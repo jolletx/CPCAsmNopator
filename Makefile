@@ -9,7 +9,7 @@ SOURCE = src/CPCAsmNopator.c
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCE) input/Instruction.csv input/subtitutions.csv
+$(TARGET): $(SOURCE) input/Instruction.csv input/subtitutions.csv input/SdasDirectives.csv
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c11 $(SOURCE) -o $@
 

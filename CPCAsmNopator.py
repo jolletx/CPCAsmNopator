@@ -11,54 +11,27 @@ from pathlib import Path
 from typing import Iterable
 
 
-SDAS_DIRECTIVES = {
-    ".area",
-    ".ascii",
-    ".ascis",
-    ".asciz",
-    ".blkb",
-    ".blkw",
-    ".byte",
-    ".db",
-    ".define",
-    ".ds",
-    ".dw",
-    ".else",
-    ".end",
-    ".endif",
-    ".equ",
-    ".fcb",
-    ".fcc",
-    ".fdb",
-    ".globl",
-    ".if",
-    ".ifdef",
-    ".ifndef",
-    ".include",
-    ".local",
-    ".macro",
-    ".mdelete",
-    ".module",
-    ".narg",
-    ".nchr",
-    ".nlist",
-    ".org",
-    ".radix",
-    ".rept",
-    ".setdp",
-    ".str",
-    ".strs",
-    ".strz",
-    ".title",
-    ".undefine",
-    ".word",
-}
-
 STATE = {
     "inside_macro": False,
     "inside_area": "",
     "current_code_size": 0,
     "current_data_size": 0,
+}
+
+SDAS_HELPERS = {
+    "ignore",
+    "data_byte",
+    "data_word",
+    "data_reserve_bytes",
+    "data_reserve_words",
+    "data_string",
+    "data_string_plus_one",
+    "macro_start",
+    "repeat_start",
+    "repeat_skip_start",
+    "block_end",
+    "repeat_end",
+    "conditional",
 }
 
 
@@ -130,6 +103,25 @@ def load_substitutions(path):
                     if value.strip():
                         substitutions.setdefault(value.strip().lower(), key.lower())
     return substitutions
+
+
+def load_sdas_directives(path):
+    directives = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter=";")
+        if not {"Directive", "Helper"}.issubset(reader.fieldnames or ()):
+            raise ValueError(f"SDAS directives table must contain Directive and Helper columns: {path}")
+        for row in reader:
+            directive = (row.get("Directive") or "").strip().lower()
+            helper = (row.get("Helper") or "").strip().lower()
+            if not directive or not helper:
+                raise ValueError(f"Empty directive or helper in SDAS directives table: {path}")
+            if directive in directives:
+                raise ValueError(f"Duplicate SDAS directive '{directive}' in {path}")
+            if helper not in SDAS_HELPERS:
+                raise ValueError(f"Unknown SDAS helper '{helper}' for '{directive}' in {path}")
+            directives[directive] = helper
+    return directives
 
 
 def split_instruction(line):
@@ -432,12 +424,6 @@ def string_size(value: str):
         return None
 
 
-DATA_DIRECTIVES = {
-    ".ascii", ".ascis", ".asciz", ".blkb", ".blkw", ".byte", ".db", ".ds",
-    ".dw", ".fcb", ".fcc", ".fdb", ".rmb", ".str", ".strs", ".strz", ".sz", ".word",
-}
-
-
 def resolve_symbol_value(expression: str, symbols):
     value = expression.strip().strip("()")
     numeric = parse_integer(value)
@@ -466,25 +452,25 @@ def update_data_size_comment(line: str, size: int, comment_column: int = 0) -> s
     return f"{line.rstrip()}{' ' * padding};; ({size})"
 
 
-def data_directive_size(opcode: str, operands: str):
+def data_directive_size(helper: str, operands: str):
     values = split_values(operands)
-    if opcode in {".db", ".byte", ".fcb"}:
+    if helper == "data_byte":
         return sum(string_size(value) if string_size(value) is not None else 1 for value in values)
-    if opcode in {".dw", ".word", ".fdb"}:
+    if helper == "data_word":
         return 2 * len(values)
-    if opcode in {".ds", ".rmb", ".blkb"}:
+    if helper == "data_reserve_bytes":
         return parse_integer(values[0]) if values else 0
-    if opcode == ".blkw":
+    if helper == "data_reserve_words":
         count = parse_integer(values[0]) if values else 0
         return count * 2 if count is not None else None
-    if opcode in {".ascii", ".ascis", ".asciz", ".str", ".strs", ".strz", ".fcc", ".sz"}:
+    if helper in {"data_string", "data_string_plus_one"}:
         size = 0
         for value in values:
             value_size = string_size(value)
             if value_size is None:
                 return None
             size += value_size
-        if opcode in {".asciz", ".strz", ".sz"}:
+        if helper == "data_string_plus_one":
             size += 1
         return size
     return 0
@@ -522,6 +508,15 @@ def analyze(path: Path, update: bool, modify: bool, data_size_comments: bool = F
     input_dir = root / "input"
     entries = load_timing_entries(input_dir / "Instruction.csv")
     substitutions = load_substitutions(input_dir / "subtitutions.csv")
+    sdas_directives = load_sdas_directives(input_dir / "SdasDirectives.csv")
+    macro_start_directives = [
+        directive for directive, helper in sdas_directives.items() if helper == "macro_start"
+    ]
+    macro_pattern = re.compile(
+        rf"^\s*(?:{'|'.join(re.escape(directive) for directive in macro_start_directives)})"
+        r"\s+([A-Za-z_.$?][A-Za-z0-9_.$?]*)",
+        re.IGNORECASE,
+    ) if macro_start_directives else None
     issues = []
     processed = []
     code_size = 0
@@ -563,7 +558,7 @@ def analyze(path: Path, update: bool, modify: bool, data_size_comments: bool = F
             value = resolve_symbol_value(assignment.group(2), symbol_values)
             if value is not None:
                 symbol_values[assignment.group(1).lower()] = value
-        macro_match = re.match(r"^\s*\.macro\s+([A-Za-z_.$?][A-Za-z0-9_.$?]*)", code, re.IGNORECASE)
+        macro_match = macro_pattern.match(code) if macro_pattern else None
         if macro_match:
             known_macros.add(macro_match.group(1).lower())
         label_match = re.match(r"^\s*([A-Za-z_.$?][A-Za-z0-9_.$?]*)\s*:{1,2}", code)
@@ -591,14 +586,15 @@ def analyze(path: Path, update: bool, modify: bool, data_size_comments: bool = F
             processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
             continue
 
-        if opcode == ".macro":
+        directive_helper = sdas_directives.get(opcode, "ignore")
+        if directive_helper == "macro_start":
             blocks.append(("macro", repeat_multiplier))
             macro_name = operands.split(None, 1)[0].lower() if operands else ""
             macro_contexts.append({"name": macro_name, "cycles": 0, "size": 0, "instructions": 0, "fixed": bool(macro_name)})
             processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
             continue
-        if opcode in {".rept", ".irp", ".irpc"}:
-            if opcode == ".rept":
+        if directive_helper in {"repeat_start", "repeat_skip_start"}:
+            if directive_helper == "repeat_start":
                 count_text = operands.split(None, 1)[0] if operands else ""
                 count = resolve_symbol_value(count_text, symbol_values)
                 if count is None:
@@ -614,8 +610,8 @@ def analyze(path: Path, update: bool, modify: bool, data_size_comments: bool = F
                 blocks.append(("skip", repeat_multiplier))
             processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
             continue
-        if opcode in {".endm", ".endr"}:
-            if blocks and (opcode == ".endm" or blocks[-1][0] in {"rept", "skip"}):
+        if directive_helper in {"block_end", "repeat_end"}:
+            if blocks and (directive_helper == "block_end" or blocks[-1][0] in {"rept", "skip"}):
                 block_type, previous_multiplier = blocks.pop()
                 if block_type == "rept":
                     repeat_multiplier = previous_multiplier
@@ -636,11 +632,11 @@ def analyze(path: Path, update: bool, modify: bool, data_size_comments: bool = F
 
         if opcode.startswith(".") or opcode.startswith("#"):
             if inside_macro:
-                if opcode in DATA_DIRECTIVES or opcode in {".if", ".ifdef", ".ifndef", ".else", ".endif"}:
+                if directive_helper.startswith("data_") or directive_helper == "conditional":
                     macro_contexts[-1]["fixed"] = False
                 processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
                 continue
-            directive_size = data_directive_size(opcode, operands)
+            directive_size = data_directive_size(directive_helper, operands)
             data_planned = False
             data_action = None
             if directive_size is None:
@@ -648,7 +644,7 @@ def analyze(path: Path, update: bool, modify: bool, data_size_comments: bool = F
             elif directive_size:
                 size = directive_size * repeat_multiplier
                 data_size += size
-                if data_size_comments and opcode in DATA_DIRECTIVES:
+                if data_size_comments and directive_helper.startswith("data_"):
                     existing_size = find_data_size_comment(raw_line)
                     if existing_size is None or existing_size != size:
                         data_planned = True

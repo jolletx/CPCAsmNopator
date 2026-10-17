@@ -4,6 +4,7 @@ A python and/or executable helper to provide correct CPC NOP timings inside asse
 # Version
 - 0.2
   - Adding c implementation in parallel to help integrate in cpctelera_next
+  - moving sdas instructions inside its own csv file.
   - Option --add-size to comment data size in a comment
   - Adding timings summary (do not decode, so no loops), can be useful if strightforward
 - 0.1
@@ -20,8 +21,8 @@ It computes also macros and repeat patterns. And provides their timing / size ac
 Copilot AI agent was used to build this tool. The starting prompt is provided inside the references directory. Conversation was long, so a lot of things have changed since. 
 
 # Status
-- It uses 2 csv with operation patterns with size and NOP timings based on ttps://cpctech.cpcwiki.de/docs/instrtim.html
-- Timing data is stored in the `input/` directory and resolved relative to each implementation.
+- It uses CSV tables in `input/` for instruction patterns and timings, operand substitutions, and SDAS directives.
+- SDAS directive behavior is defined in `input/SdasDirectives.csv` and shared by the Python and C implementations.
 - It understand sdas macro langage. 
 - It works well with cpctelera sources incuding special opcodes macros.
 - It provides unknown status when encountered.

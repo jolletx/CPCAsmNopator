@@ -71,8 +71,15 @@ typedef struct {
     int size;
 } MacroTiming;
 
+typedef struct {
+    char *directive;
+    char *helper;
+} SdasDirective;
+
 static TimingEntry *entries;
 static size_t entry_count;
+static SdasDirective *sdas_directives;
+static size_t sdas_directive_count;
 static char **known_macros;
 static size_t known_macro_count;
 static char **labels;
@@ -83,6 +90,27 @@ static size_t symbol_count;
 static MacroTiming *macro_timings;
 static size_t macro_timing_count;
 static char *condition_codes;
+
+static const char *sdas_helper(const char *opcode) {
+    for (size_t i = 0; i < sdas_directive_count; i++)
+        if (!strcmp(sdas_directives[i].directive, opcode)) return sdas_directives[i].helper;
+    return "ignore";
+}
+
+static bool is_data_helper(const char *helper) {
+    return strncmp(helper, "data_", 5) == 0;
+}
+
+static bool valid_sdas_helper(const char *helper) {
+    static const char *helpers[] = {
+        "ignore", "data_byte", "data_word", "data_reserve_bytes", "data_reserve_words",
+        "data_string", "data_string_plus_one", "macro_start", "repeat_start",
+        "repeat_skip_start", "block_end", "repeat_end", "conditional"
+    };
+    for (size_t i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++)
+        if (!strcmp(helper, helpers[i])) return true;
+    return false;
+}
 
 static void *xrealloc(void *ptr, size_t size) {
     void *result = realloc(ptr, size ? size : 1);
@@ -307,6 +335,45 @@ static void load_tables(const char *root) {
             free(condition_codes);
             condition_codes = lower_copy(linked);
         }
+    }
+    free(line);
+    fclose(file);
+
+    path = format_string("%s/input/SdasDirectives.csv", root);
+    file = fopen(path, "r");
+    if (!file) {
+        fprintf(stderr, "Error: cannot open SDAS directives table: %s\n", path);
+        exit(2);
+    }
+    free(path);
+    line = NULL;
+    capacity = 0;
+    if (getline(&line, &capacity, file) < 0) {
+        fprintf(stderr, "Error: SDAS directives table is empty\n");
+        exit(2);
+    }
+    if (strcmp(trim(line), "Directive;Helper") != 0) {
+        fprintf(stderr, "Error: invalid SDAS directives table header\n");
+        exit(2);
+    }
+    while (getline(&line, &capacity, file) >= 0) {
+        char *directive_name = strtok(line, ";\r\n");
+        char *helper = strtok(NULL, ";\r\n");
+        if (!directive_name || !helper) {
+            fprintf(stderr, "Error: invalid row in SDAS directives table\n");
+            exit(2);
+        }
+        directive_name = trim(directive_name);
+        helper = trim(helper);
+        if (!*directive_name || !*helper || !valid_sdas_helper(helper)) {
+            fprintf(stderr, "Error: invalid directive or helper in SDAS directives table: %s\n", line);
+            exit(2);
+        }
+        sdas_directives = xrealloc(sdas_directives, (sdas_directive_count + 1) * sizeof(*sdas_directives));
+        sdas_directives[sdas_directive_count++] = (SdasDirective){
+            .directive=lower_copy(directive_name),
+            .helper=lower_copy(helper)
+        };
     }
     free(line);
     fclose(file);
@@ -718,50 +785,37 @@ static int quoted_string_size(const char *value) {
     return size;
 }
 
-static bool is_data_directive(const char *opcode) {
-    static const char *directives[] = {
-        ".ascii",".ascis",".asciz",".blkb",".blkw",".byte",".db",".ds",".dw",
-        ".fcb",".fcc",".fdb",".rmb",".str",".strs",".strz",".sz",".word"
-    };
-    for (size_t i = 0; i < sizeof(directives)/sizeof(directives[0]); i++)
-        if (!strcmp(opcode, directives[i])) return true;
-    return false;
-}
-
-static int data_directive_size(const char *opcode, const char *operands, bool *known) {
+static int data_directive_size(const char *helper, const char *operands, bool *known) {
     size_t count;
     char **values = split_values(operands, &count);
     int size = 0;
     *known = true;
-    if (!strcmp(opcode, ".db") || !strcmp(opcode, ".byte") || !strcmp(opcode, ".fcb")) {
+    if (!strcmp(helper, "data_byte")) {
         for (size_t i = 0; i < count; i++) {
             int n = quoted_string_size(values[i]);
             size += n >= 0 ? n : 1;
         }
-    } else if (!strcmp(opcode, ".dw") || !strcmp(opcode, ".word") || !strcmp(opcode, ".fdb")) {
+    } else if (!strcmp(helper, "data_word")) {
         size = (int)count * 2;
-    } else if (!strcmp(opcode, ".ds") || !strcmp(opcode, ".rmb") || !strcmp(opcode, ".blkb")) {
+    } else if (!strcmp(helper, "data_reserve_bytes")) {
         if (count) {
             bool found;
             size = parse_symbol(values[0], &found);
             if (!found) *known = false;
         }
-    } else if (!strcmp(opcode, ".blkw")) {
+    } else if (!strcmp(helper, "data_reserve_words")) {
         if (count) {
             bool found;
             size = parse_symbol(values[0], &found) * 2;
             if (!found) *known = false;
         }
-    } else if (!strcmp(opcode, ".ascii") || !strcmp(opcode, ".ascis") ||
-               !strcmp(opcode, ".asciz") || !strcmp(opcode, ".str") ||
-               !strcmp(opcode, ".strs") || !strcmp(opcode, ".strz") ||
-               !strcmp(opcode, ".fcc") || !strcmp(opcode, ".sz")) {
+    } else if (!strcmp(helper, "data_string") || !strcmp(helper, "data_string_plus_one")) {
         for (size_t i = 0; i < count; i++) {
             int n = quoted_string_size(values[i]);
             if (n < 0) *known = false;
             else size += n;
         }
-        if (!strcmp(opcode, ".asciz") || !strcmp(opcode, ".strz") || !strcmp(opcode, ".sz")) size++;
+        if (!strcmp(helper, "data_string_plus_one")) size++;
     }
     for (size_t i = 0; i < count; i++) free(values[i]);
     free(values);
@@ -941,8 +995,20 @@ static AnalysisResult analyze_file(const char *path, bool update, bool modify,
         char *comment = NULL;
         char *code = split_comment(raw_lines[i], &comment);
         free(comment);
-        char *macro = regex_group("^[ \t]*\\.macro[ \t]+([A-Za-z_.$?][A-Za-z0-9_.$?]*)", code, 1);
-        if (macro) { char *low = lower_copy(macro); add_string(&known_macros, &known_macro_count, low); free(low); free(macro); }
+        bool label_only = false;
+        char *statement = parse_statement(raw_lines[i], &label_only);
+        if (statement) {
+            char *separator = strchr(statement, '\n');
+            *separator = '\0';
+            if (!strcmp(sdas_helper(statement), "macro_start")) {
+                char *macro = strndup(separator + 1, strcspn(separator + 1, " \t"));
+                char *low = lower_copy(macro);
+                add_string(&known_macros, &known_macro_count, low);
+                free(low);
+                free(macro);
+            }
+            free(statement);
+        }
         char *label = regex_group("^[ \t]*([A-Za-z_.$?][A-Za-z0-9_.$?]*)[ \t]*:{1,2}", code, 1);
         if (label) { char *low = lower_copy(label); add_string(&labels, &label_count, low); free(low); free(label); }
         char *name = regex_group("^[ \t]*([A-Za-z_.$?][A-Za-z0-9_.$?]*)[ \t]*=", code, 1);
@@ -1001,15 +1067,16 @@ static AnalysisResult analyze_file(const char *path, bool update, bool modify,
         char *opcode = statement;
         char *operands = separator + 1;
 
-        if (!strcmp(opcode, ".macro")) {
+        const char *helper = sdas_helper(opcode);
+        if (!strcmp(helper, "macro_start")) {
             if (block_count < 256) blocks[block_count++] = (Block){"macro", repeat};
             char *name = strndup(operands, strcspn(operands, " \t"));
             if (macro_count < 256)
                 macros[macro_count++] = (MacroContext){.name=lower_copy(name), .fixed=*name != '\0'};
             free(name); free(statement); continue;
         }
-        if (!strcmp(opcode, ".rept") || !strcmp(opcode, ".irp") || !strcmp(opcode, ".irpc")) {
-            if (!strcmp(opcode, ".rept")) {
+        if (!strcmp(helper, "repeat_start") || !strcmp(helper, "repeat_skip_start")) {
+            if (!strcmp(helper, "repeat_start")) {
                 char *count_text = strndup(operands, strcspn(operands, " \t"));
                 bool found = false;
                 int count = parse_symbol(count_text, &found);
@@ -1027,8 +1094,8 @@ static AnalysisResult analyze_file(const char *path, bool update, bool modify,
             }
             free(statement); continue;
         }
-        if (!strcmp(opcode, ".endm") || !strcmp(opcode, ".endr")) {
-            if (block_count && (!strcmp(opcode, ".endm") ||
+        if (!strcmp(helper, "block_end") || !strcmp(helper, "repeat_end")) {
+            if (block_count && (!strcmp(helper, "block_end") ||
                 !strcmp(blocks[block_count - 1].type, "rept") || !strcmp(blocks[block_count - 1].type, "skip"))) {
                 char *type = blocks[--block_count].type;
                 if (!strcmp(type, "rept")) repeat = blocks[block_count].previous;
@@ -1050,19 +1117,18 @@ static AnalysisResult analyze_file(const char *path, bool update, bool modify,
 
         if (directive(opcode)) {
             if (macro_count) {
-                if (is_data_directive(opcode) || !strcmp(opcode, ".if") || !strcmp(opcode, ".ifdef") ||
-                    !strcmp(opcode, ".ifndef") || !strcmp(opcode, ".else") || !strcmp(opcode, ".endif"))
+                if (is_data_helper(helper) || !strcmp(helper, "conditional"))
                     macros[macro_count - 1].fixed = false;
                 free(statement); continue;
             }
             bool known = true;
-            int bytes = data_directive_size(opcode, operands, &known);
+            int bytes = data_directive_size(helper, operands, &known);
             if (!known) {
                 add_issue(&result, (int)i + 1, format_string("Cannot determine size of %s data", opcode));
             } else if (bytes) {
                 item->size = bytes * repeat;
                 result.data_size += item->size;
-                if (data_comments && is_data_directive(opcode)) {
+                if (data_comments && is_data_helper(helper)) {
                     bool has_size;
                     char *old = comment_value(raw_lines[i], '(', &has_size);
                     char expected[32]; snprintf(expected, sizeof(expected), "%d", item->size);
