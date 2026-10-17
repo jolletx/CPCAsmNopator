@@ -4,6 +4,7 @@
 
 SYMVALUE = 10
 
+    .db 0xAA
 .area _DATA_sample
 values :
     .db 1, 2, 3
@@ -33,6 +34,7 @@ start:
     ld a, #0x01
     ld (patch_value+1), a
     or a, #0x01
+    call mystery
     call mystery
     unknown_op 1
     sub e
@@ -66,3 +68,4 @@ helper:
     ret
 computeXIntersect:
     ret
+    .db 0xBB

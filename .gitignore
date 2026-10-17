@@ -221,3 +221,4 @@ __marimo__/
 
 # my workspace ignore
 temp/*
+bin/*

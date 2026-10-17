@@ -1,9 +1,11 @@
 Analysis: <input>
-Recommended modifications: 41
-Global code size: 64 bytes
-Global data size: 28 bytes
+Recommended modifications: 44
+Global code size: 67 bytes
+Global data size: 30 bytes
+Timings (no loop)  min:85 NOPs max:87 NOPs + 2 x mystery + unknown_op
 
 Warnings:
-- Line 36: Call to unknown timing subroutine 'mystery'
-- Line 37: Unknown operator or macro 'unknown_op'
+- Line 37: Call to unknown timing subroutine 'mystery'
+- Line 38: Call to unknown timing subroutine 'mystery'
+- Line 39: Unknown operator or macro 'unknown_op'
 

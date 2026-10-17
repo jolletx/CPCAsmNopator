@@ -86,12 +86,16 @@ class ProcessedLine:
 
 
 class AnalysisResult:
-    def __init__(self, lines, issues, code_size: int, data_size: int, recommended_modifications: int) -> None:
+    def __init__(self, lines, issues, code_size: int, data_size: int, recommended_modifications: int,
+                 timing_min: int = 0, timing_max: int = 0, unknown_timings=None) -> None:
         self.lines = lines
         self.issues = issues
         self.code_size = code_size
         self.data_size = data_size
         self.recommended_modifications = recommended_modifications
+        self.timing_min = timing_min
+        self.timing_max = timing_max
+        self.unknown_timings = unknown_timings or Counter()
 
 
 def load_timing_entries(path):
@@ -513,26 +517,19 @@ def split_statement(line: str, known_opcodes):
     return match.group(1).lower(), (match.group(2) or "").strip(), False
 
 
-def is_code_area(area: str) -> bool:
-    name = area.strip().lower().lstrip("_")
-    return name.startswith("code")
-
-
-def is_data_area(area: str) -> bool:
-    name = area.strip().lower().lstrip("_")
-    return name.startswith("data")
-
-
-def analyze(path: Path, update: bool, modify: bool) -> AnalysisResult:
+def analyze(path: Path, update: bool, modify: bool, data_size_comments: bool = False) -> AnalysisResult:
     root = Path(__file__).resolve().parent
-    entries = load_timing_entries(root / "Instruction.csv")
-    substitutions = load_substitutions(root / "subtitutions.csv")
+    input_dir = root / "input"
+    entries = load_timing_entries(input_dir / "Instruction.csv")
+    substitutions = load_substitutions(input_dir / "subtitutions.csv")
     issues = []
     processed = []
     code_size = 0
     data_size = 0
     recommendations = 0
-    current_area = ""
+    timing_min = 0
+    timing_max = 0
+    unknown_timings = Counter()
     raw_contents = path.read_bytes()
     decoded_lines = []
     byte_offset = 0
@@ -637,12 +634,6 @@ def analyze(path: Path, update: bool, modify: bool) -> AnalysisResult:
             processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
             continue
 
-        if opcode == ".area":
-            if not inside_macro:
-                current_area = operands.split(None, 1)[0].strip('"') if operands else ""
-            processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
-            continue
-
         if opcode.startswith(".") or opcode.startswith("#"):
             if inside_macro:
                 if opcode in DATA_DIRECTIVES or opcode in {".if", ".ifdef", ".ifndef", ".else", ".endif"}:
@@ -651,23 +642,22 @@ def analyze(path: Path, update: bool, modify: bool) -> AnalysisResult:
                 continue
             directive_size = data_directive_size(opcode, operands)
             data_planned = False
+            data_action = None
             if directive_size is None:
                 issues.append(LineIssue(line_number, f"Cannot determine size of {opcode} data"))
-            elif directive_size and is_data_area(current_area):
+            elif directive_size:
                 size = directive_size * repeat_multiplier
                 data_size += size
-                if opcode in DATA_DIRECTIVES:
+                if data_size_comments and opcode in DATA_DIRECTIVES:
                     existing_size = find_data_size_comment(raw_line)
                     if existing_size is None or existing_size != size:
                         data_planned = True
+                        data_action = "add size" if existing_size is None else "correct size"
                         recommendations += 1
                         updated = update_data_size_comment(raw_line, size, comment_column)
                         if existing_size is not None and not update:
                             issues.append(LineIssue(line_number, f"Data size mismatch: found ({existing_size}), expected ({size}) (use --update to replace)"))
-            elif directive_size and is_code_area(current_area):
-                code_size += directive_size * repeat_multiplier
-                size = directive_size * repeat_multiplier
-            processed.append(ProcessedLine(raw_line, updated, None, size, issue="planned" if data_planned else None, line_number=line_number))
+            processed.append(ProcessedLine(raw_line, updated, None, size, issue=data_action if data_planned else None, line_number=line_number))
             continue
 
         macro_summary = None
@@ -689,6 +679,7 @@ def analyze(path: Path, update: bool, modify: bool) -> AnalysisResult:
                 macro_contexts[-1]["fixed"] = False
                 processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
                 continue
+            unknown_timings[opcode] += 1
             issues.append(LineIssue(line_number, f"Unknown operator or macro '{opcode}'"))
             processed.append(ProcessedLine(raw_line, updated, None, 0, line_number=line_number))
             continue
@@ -700,6 +691,7 @@ def analyze(path: Path, update: bool, modify: bool) -> AnalysisResult:
             size = matched.size
         existing = find_timing_comment(raw_line)
         planned = existing is None or existing != timing
+        action = "annotate" if existing is None else "correct"
         if existing is None:
             recommendations += 1
             updated = update_timing_comment(raw_line, timing, comment_column)
@@ -718,20 +710,22 @@ def analyze(path: Path, update: bool, modify: bool) -> AnalysisResult:
             else:
                 macro_context["fixed"] = False
             size *= repeat_multiplier
-        elif not current_area or is_code_area(current_area):
+        else:
             code_size += size * repeat_multiplier
             size *= repeat_multiplier
-        elif is_data_area(current_area):
-            data_size += size * repeat_multiplier
-            size *= repeat_multiplier
+            timing_values = [int(value) for value in timing.split("/") if value.isdigit()]
+            if timing_values:
+                timing_min += min(timing_values)
+                timing_max += max(timing_values)
 
         if opcode == "call" and not inside_macro:
             targets = split_values(operands)
             target = targets[-1].strip("() ").lower() if targets else ""
             if target and target not in local_labels:
+                unknown_timings[target] += 1
                 issues.append(LineIssue(line_number, f"Call to unknown timing subroutine '{target}'"))
 
-        processed.append(ProcessedLine(raw_line, updated, timing, size, issue="planned" if planned else None, line_number=line_number))
+        processed.append(ProcessedLine(raw_line, updated, timing, size, issue=action if planned else None, line_number=line_number))
 
     if modify:
         output = line_ending.join(
@@ -745,7 +739,16 @@ def analyze(path: Path, update: bool, modify: bool) -> AnalysisResult:
         with path.open("w", encoding="utf-8", newline="") as handle:
             handle.write(output)
 
-    return AnalysisResult(processed, issues, code_size, data_size, recommendations)
+    return AnalysisResult(processed, issues, code_size, data_size, recommendations,
+                          timing_min, timing_max, unknown_timings)
+
+
+def format_timing_summary(timing_min: int, timing_max: int, unknown_timings) -> str:
+    remainder = []
+    for label, count in unknown_timings.items():
+        remainder.append(f"{count} x {label}" if count > 1 else label)
+    suffix = "".join(f" + {item}" for item in remainder)
+    return f"Timings (no loop)  min:{timing_min} NOPs max:{timing_max} NOPs{suffix}"
 
 
 def print_summary(result: AnalysisResult, path: Path, verbose: bool, no_modify: bool, debug: bool = False) -> None:
@@ -753,6 +756,7 @@ def print_summary(result: AnalysisResult, path: Path, verbose: bool, no_modify: 
     print(f"Recommended modifications: {result.recommended_modifications}")
     print(f"Global code size: {result.code_size} bytes")
     print(f"Global data size: {result.data_size} bytes")
+    print(format_timing_summary(result.timing_min, result.timing_max, result.unknown_timings))
     print()
 
     if result.issues:
@@ -763,11 +767,14 @@ def print_summary(result: AnalysisResult, path: Path, verbose: bool, no_modify: 
 
     if debug or verbose:
         for item in result.lines:
-            if not debug and item.issue != "planned":
+            if not debug and item.issue is None:
                 continue
-            action = "annotate/correct" if item.issue == "planned" else "none"
+            action = item.issue or "none"
             timing = f"[{item.recommended}]" if item.recommended is not None else "-"
-            print(f"Line {item.line_number}: size={item.size} bytes timing={timing} planned={action} | {item.original}")
+            print(f"Line {item.line_number}: size={item.size} bytes timing={timing} action={action}")
+            if item.original != item.updated:
+                print(f"Before: {item.original}")
+                print(f"After:  {item.updated}")
     elif no_modify:
         for item in result.lines:
             if item.original == item.updated:
@@ -783,6 +790,7 @@ def parse_args(argv: Iterable[str]) -> argparse.Namespace:
     parser.add_argument("--verbose", "-v", action="store_true", help="Print recommended modifications")
     parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--modify", "-m", action="store_true", help="Write annotations to the input source file")
+    parser.add_argument("--data-size", action="store_true", help="Add or update byte-size comments on data directives")
     return parser.parse_args(list(argv))
 
 
@@ -800,14 +808,20 @@ def analyze_directory(path: Path, args: argparse.Namespace) -> int:
     total_data_size = 0
     total_issues = 0
     files_with_issues = 0
+    total_timing_min = 0
+    total_timing_max = 0
+    unknown_timings = Counter()
     for index, source_file in enumerate(source_files, 1):
         relative_path = source_file.relative_to(path)
         print(f"=== File {index}/{len(source_files)}: {relative_path} ===")
-        result = analyze(source_file, args.update, args.modify)
+        result = analyze(source_file, args.update, args.modify, args.data_size)
         print_summary(result, source_file, args.verbose, not args.modify, args.debug)
         total_recommendations += result.recommended_modifications
         total_code_size += result.code_size
         total_data_size += result.data_size
+        total_timing_min += result.timing_min
+        total_timing_max += result.timing_max
+        unknown_timings.update(result.unknown_timings)
         total_issues += len(result.issues)
         files_with_issues += bool(result.issues)
 
@@ -816,6 +830,7 @@ def analyze_directory(path: Path, args: argparse.Namespace) -> int:
     print(f"Recommended modifications: {total_recommendations}")
     print(f"Global code size: {total_code_size} bytes")
     print(f"Global data size: {total_data_size} bytes")
+    print(format_timing_summary(total_timing_min, total_timing_max, unknown_timings))
     print(f"Warnings: {total_issues} across {files_with_issues} files")
     print(f"Directory status: {'PASS' if not total_issues else 'WARNINGS'}")
     return 0
@@ -830,7 +845,7 @@ def main(argv=None):
         print(f"Error: input file not found: {path}", file=sys.stderr)
         return 2
 
-    result = analyze(path, args.update, args.modify)
+    result = analyze(path, args.update, args.modify, args.data_size)
     print_summary(result, path, args.verbose, not args.modify, args.debug)
     return 0
 

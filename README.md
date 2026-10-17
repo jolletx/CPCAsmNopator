@@ -1,13 +1,19 @@
 # CPCAsmNopator
-A python helper to provide correct CPC NOP timings inside assembly files.
+A python and/or executable helper to provide correct CPC NOP timings inside assembly files.
 
 # Version
-- 0.1: First delivered version
+- 0.2
+  - Adding c implementation in parallel to help integrate in cpctelera_next
+  - Option --add-size to comment data size in a comment
+  - Adding timings summary (do not decode, so no loops), can be useful if strightforward
+- 0.1
+  - First delivered version
+  - Python version
 
 # Summary
-Defined to be used with CPCTelera way of coding, this script scans assembly files for each operation and provide its NOP timing (CPC measure). It also compute data size if encountered. 
+Defined to be used with CPCTelera way of coding, this script scans assembly files for each operation and provide its NOP timing (CPC measure). It also computes code and data sizes regardless of the current `.area`.
 New lines are automatically commented with their timings, and old lines can be updated (when a bad timing is found).
-It also computes global data size and code size as a summary for each file and for directories.
+Global data size and code size are always included in summaries. Use `--data-size` to add or update byte-size comments on data directives.
 It computes also macros and repeat patterns. And provides their timing / size accordingly when used. 
 
 # AI
@@ -15,6 +21,7 @@ Copilot AI agent was used to build this tool. The starting prompt is provided in
 
 # Status
 - It uses 2 csv with operation patterns with size and NOP timings based on ttps://cpctech.cpcwiki.de/docs/instrtim.html
+- Timing data is stored in the `input/` directory and resolved relative to each implementation.
 - It understand sdas macro langage. 
 - It works well with cpctelera sources incuding special opcodes macros.
 - It provides unknown status when encountered.
@@ -26,5 +33,17 @@ python3 CPCAsmNopator.py --update test/input.s
 - Modification (only new lines):
 python3 CPCAsmNopator.py --modify test/input.s
 
+- Modification with data-size comments:
+python3 CPCAsmNopator.py --modify --data-size test/input.s
+
 - Analysis of directory:
 python3 CPCAsmNopator.py --update test
+
+# C version
+Build the native executable in `bin/` with:
+
+make
+
+Run it with the same options and arguments as the Python script, for example:
+
+./bin/CPCAsmNopator --update test/sample.s
