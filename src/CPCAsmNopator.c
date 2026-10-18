@@ -485,12 +485,14 @@ static char *normalize_symbol(const char *input) {
     if (!strcmp(symbol, "ixh") || !strcmp(symbol, "ixl") ||
         !strcmp(symbol, "iyh") || !strcmp(symbol, "iyl")) return (free(symbol), xstrdup("s"));
     if (!strcmp(symbol, "ix") || !strcmp(symbol, "iy")) return (free(symbol), xstrdup("qq"));
-    if (!strcmp(symbol, "bc") || !strcmp(symbol, "de") || !strcmp(symbol, "hl"))
+    if (!strcmp(symbol, "bc") || !strcmp(symbol, "de") || !strcmp(symbol, "hl") ||
+        !strcmp(symbol, "af"))
         return (free(symbol), xstrdup("pp"));
+    if (strlen(symbol) == 1 && strchr("abcdehl", symbol[0]))
+        return (free(symbol), xstrdup("k"));
     if (!strcmp(symbol, "nz") || !strcmp(symbol, "z") || !strcmp(symbol, "nc") ||
         !strcmp(symbol, "c") || !strcmp(symbol, "po") || !strcmp(symbol, "pe") ||
         !strcmp(symbol, "p") || !strcmp(symbol, "m")) return (free(symbol), xstrdup("cc"));
-    if (strlen(symbol) == 1 && strchr("abcdehl", symbol[0])) return (free(symbol), xstrdup("k"));
     if (is_integer(symbol, NULL)) return (free(symbol), xstrdup("n"));
     if (is_symbol(symbol)) {
         if (strlen(symbol) > 1 && strcmp(symbol, "sp") && strcmp(symbol, "af") &&

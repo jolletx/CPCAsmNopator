@@ -65,4 +65,9 @@ diff -u "$temp_dir/python-verbose.txt" "$temp_dir/c-verbose.txt"
 "$tool_dir/bin/CPCAsmNopator" "$test_dir/sample.s" --debug --data-size > "$temp_dir/c-debug.txt"
 diff -u "$temp_dir/python-debug.txt" "$temp_dir/c-debug.txt"
 
+printf '    push af\n    pop af\n    ld b,c\n    ld c,e\n    ld c,(hl)\n    ld a,c\n    sla c\n    jr c,done\ndone:\n    ret\n' > "$temp_dir/register-parity.asm"
+"$python" "$tool_dir/CPCAsmNopator.py" "$temp_dir/register-parity.asm" --debug > "$temp_dir/python-register-parity.txt"
+"$tool_dir/bin/CPCAsmNopator" "$temp_dir/register-parity.asm" --debug > "$temp_dir/c-register-parity.txt"
+diff -u "$temp_dir/python-register-parity.txt" "$temp_dir/c-register-parity.txt"
+
 printf 'CPCAsmNopator regression passed\n'
