@@ -2,6 +2,8 @@
 A python and/or executable helper to provide correct CPC NOP timings inside assembly files.
 
 # Version
+- 0.2b
+  - Correcting ld a,i (and variants) handling in python
 - 0.2
   - Adding c implementation in parallel to help integrate in cpctelera_next
   - moving sdas instructions inside its own csv file.
