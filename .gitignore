@@ -219,6 +219,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# vs code
+.vscode
+
 # my workspace ignore
 temp/*
 bin/*

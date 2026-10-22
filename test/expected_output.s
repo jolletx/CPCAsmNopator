@@ -22,6 +22,10 @@ patch_value : .dw 0              ;; (2)
 .area _CODE
 start:
     ld a, b                      ;; [1] already correct
+    ld a, i                      ;; [3]
+    ld i, a                      ;; [3]
+    ld a, r                      ;; [3]
+    ld r, a                      ;; [3]
     ld (hl), e                  ;; [2] deliberately incorrect
     jr z, next                   ;; [2/3]
     jr c, next                   ;; [2/3]

@@ -145,6 +145,8 @@ def normalize_symbol(symbol, substitutions):
     lowered = symbol.lower()
     if lowered in substitutions:
         return substitutions[lowered]
+    if lowered in {"i", "r"}:
+        return lowered
 #    if re.fullmatch(r"[a-z]", lowered):
 #        return "k"
     if re.fullmatch(r"(?:ixh|ixl|iyh|iyl)", lowered):
